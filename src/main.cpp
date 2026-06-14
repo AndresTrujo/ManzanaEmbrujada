@@ -4,155 +4,189 @@
 #include <Adafruit_NeoPixel.h>
 
 // --- CONFIGURACIÓN DE LOS LEDS ---
-#define PIN_LEDS      2  
-#define NUM_LEDS     30 
+#define PIN_LEDS      2   
+#define NUM_LEDS     300  
 
 uint8_t rojoActual = 0, verdeActual = 0, azulActual = 0;
+unsigned long ultimoEventoMs = 0; 
+const unsigned long TIEMPO_IDLE_MS = 3000; // 3 segundos antes de volver al blanco de espera
 
 Adafruit_NeoPixel tiras(NUM_LEDS, PIN_LEDS, NEO_GRB + NEO_KHZ800);
 
-// --- PALETA DE 16 COLORES EN MATRIZ (R, G, B) ---
-const uint8_t PALETA_COLORES[16][3] = {
-  {255, 0, 0},     // 0. Rojo Puro
-  {255, 60, 0},    // 1. Naranja Intenso
-  {255, 120, 0},   // 2. Ámbar / Dorado
-  {255, 200, 0},   // 3. Amarillo Neón
-  {120, 255, 0},   // 4. Verde Lima
-  {0, 255, 0},     // 5. Verde Esmeralda
-  {0, 255, 130},   // 6. Turquesa / Menta
-  {0, 255, 255},   // 7. Cian / Celeste
-  {0, 100, 255},   // 8. Azul Eléctrico
-  {0, 0, 255},     // 9. Azul Marino Fuerte
-  {70, 0, 255},    // 10. Índigo / Violeta
-  {160, 0, 255},   // 11. Púrpura Vibrante
-  {255, 0, 255},   // 12. Magenta / Fucsia
-  {255, 0, 100},   // 13. Rosa Frambuesa
-  {139, 69, 19},    // 14. Marrón Chocolate
-  {230, 230, 250}  // 15. Blanco Lavanda
+// --- COLORES BASE PARA REFERENCIA ---
+// Blanco: {255, 255, 255} | Rojo: {255, 0, 0} | Verde: {0, 255, 0} | Amarillo: {255, 200, 0} | Azul: {0, 0, 255}
+
+// --- MAPA DE COLORES FIJOS: BOTONES PRINCIPALES (1 al 12) ---
+const uint8_t PALETA_PRINCIPALES[12][3] = {
+  {255, 255, 255}, // Btn 1: Blanco
+  {255, 0, 0},     // Btn 2: Rojo
+  {0, 255, 0},     // Btn 3: Verde
+  {255, 255, 255}, // Btn 4: Blanco
+  {255, 200, 0},   // Btn 5: Amarillo
+  {0, 0, 255},     // Btn 6: Azul
+  {0, 0, 255},     // Btn 7: Azul
+  {255, 255, 255}, // Btn 8: Blanco
+  {255, 0, 0},     // Btn 9: Rojo
+  {0, 0, 255},     // Btn 10: Azul
+  {255, 200, 0},   // Btn 11: Amarillo
+  {0, 255, 0}      // Btn 12: Verde
+};
+
+// --- MAPA DE COLORES FIJOS: BOTONES SECUNDARIOS (1 al 4) ---
+const uint8_t PALETA_SECUNDARIOS[4][3] = {
+  {255, 0, 0},     // Btn 1: Rojo
+  {255, 200, 0},   // Btn 2: Amarillo
+  {0, 0, 255},     // Btn 3: Azul
+  {255, 255, 255}  // Btn 4: Blanco
+};
+
+// --- PALETA DE 16 COLORES HASH PARA MONEDAS NFC ---
+const uint8_t PALETA_NFC[16][3] = {
+  {255, 0, 0}, {255, 60, 0}, {255, 120, 0}, {255, 200, 0},
+  {120, 255, 0}, {0, 255, 0}, {0, 255, 130}, {0, 255, 255},
+  {0, 100, 255}, {0, 0, 255}, {70, 0, 255}, {160, 0, 255},
+  {255, 0, 255}, {255, 0, 100}, {139, 69, 19}, {230, 230, 250}
 };
 
 // --- CONFIGURACIÓN DEL NFC ---
 Adafruit_PN532 nfc(-1, -1);
 
 // --- CONFIGURACIÓN DE BOTONES ---
-const int botonesPrincipales[12] = {3, 4, 5, 6, 7, 8, 9, 10, 11, A0, A1, A2};
-const int botonesSecundarios[4]  = {12, 13, A3, 1}; 
+const int botonesPrincipales[12] = {13, 12, 14, 27, 26, 25, 33, 32, 15, 4, 16, 17};
+const int botonesSecundarios[4]  = {5, 18, 19, 23};
 
-// --- VARIABLES DE ESTADO ---
-int seleccionPrincipal = -1;
-int seleccionSecundaria = -1;
-enum Estado { SELECCION_1, SELECCION_2, ESPERANDO_NFC };
-Estado estadoActual = SELECCION_1;
+unsigned long ultimoDebounceBotones[16] = {0};
+const unsigned long TIEMPO_DEBOUNCE = 250; 
 
-// Prototipos obligatorios
+// Prototipos
 void cambiarColorGradual(uint8_t rDestino, uint8_t gDestino, uint8_t bDestino, int pasos, int esperaMs);
 int obtenerIndiceColor(String codigo);
+void revisarBotones();
+void revisarNFC();
 
 void setup() {
   Serial.begin(115200);
+  delay(500);
   
-  // Inicializar Tiras LED
   tiras.begin();
-  cambiarColorGradual(50, 50, 50, 40, 10); // Luz de espera blanca tenue
+  tiras.setBrightness(255); 
+  cambiarColorGradual(50, 50, 50, 40, 6); // Inicializar en IDLE (Blanco tenue de espera)
+  ultimoEventoMs = millis();
 
-  // Inicializar Botones
   for(int i=0; i<12; i++) pinMode(botonesPrincipales[i], INPUT_PULLUP);
   for(int i=0; i<4; i++)  pinMode(botonesSecundarios[i], INPUT_PULLUP);
 
-  // Inicializar NFC
+  Wire.begin(21, 22);
+
   nfc.begin();
   uint32_t versiondata = nfc.getFirmwareVersion();
   if (!versiondata) {
-    Serial.println(F("Error: No se encontro el modulo PN532"));
-    while (1); 
-  } else {
-    Serial.println(F("NFC iniciado"));
+    Serial.println(F("❌ Error: PN532 no detectado"));
+    while (1) delay(10); 
   }
   nfc.SAMConfig(); 
+  Serial.println(F("--- ESP32 MAPA DE COLORES LISTO ---"));
 }
 
 void loop() {
-  switch (estadoActual) {
-    
-    case SELECCION_1:
-      for (int i = 0; i < 12; i++) {
-        if (digitalRead(botonesPrincipales[i]) == LOW) { 
-          Serial.println(F("Boton presionado"));
-          seleccionPrincipal = i + 1;
-          cambiarColorGradual(0, 0, 255, 50, 10); // Azul de transición
-          delay(300); 
-          estadoActual = SELECCION_2;
-          break;
-        }
-      }
-      break;
+  revisarBotones();
+  revisarNFC();
 
-    case SELECCION_2:
-      for (int i = 0; i < 4; i++) {
-        if (digitalRead(botonesSecundarios[i]) == LOW) {
-          Serial.println(F("Boton presionado"));
-          seleccionSecundaria = i + 1;
-          cambiarColorGradual(0, 255, 0, 50, 10); // Verde de transición
-          delay(300);
-          estadoActual = ESPERANDO_NFC;
-          break;
-        }
-      }
-      break;
-
-    case ESPERANDO_NFC:
-      uint8_t success;
-      uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  
-      uint8_t uidLength;                        
-      
-      success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 300);
-      
-      if (success) {
-        uint8_t data[16];
-        String codigoMoneda = "";
-        
-        if (nfc.mifareclassic_ReadDataBlock(4, data)) {
-          for (int i = 0; i < 16; i++) {
-            if (data[i] >= 32 && data[i] <= 126) { 
-              codigoMoneda += (char)data[i];
-            }
-          }
-          codigoMoneda.trim(); 
-        } else {
-          for (uint8_t i = 0; i < uidLength; i++) {
-            codigoMoneda += String(uid[i], HEX);
-          }
-        }
-
-        // --- REPORTE SERIAL ---
-        Serial.print(F("DATA:"));
-        Serial.print(seleccionPrincipal);
-        Serial.print(F(","));
-        Serial.print(seleccionSecundaria);
-        Serial.print(F(","));
-        Serial.println(codigoMoneda);
-        
-        // --- ASIGNACIÓN DE COLOR SEGÚN LA MONEDA ---
-        int indiceColor = obtenerIndiceColor(codigoMoneda);
-        uint8_t rDestino = PALETA_COLORES[indiceColor][0];
-        uint8_t gDestino = PALETA_COLORES[indiceColor][1];
-        uint8_t bDestino = PALETA_COLORES[indiceColor][2];
-        
-        // 1. Destello rápido en el color único asignado a esa moneda para celebrar el éxito
-        cambiarColorGradual(rDestino, gDestino, bDestino, 20, 8); 
-        delay(1500); // Mantenemos el color encendido mientras el video/audio arranca en Python
-        
-        // 2. Reiniciamos variables y regresamos la tira led al color base de espera (IDLE)
-        seleccionPrincipal = -1;
-        seleccionSecundaria = -1;
-        cambiarColorGradual(50, 50, 50, 40, 10); 
-        estadoActual = SELECCION_1;
-      }
-      break;
+  // Temporizador para regresar a IDLE (Blanco tenue)
+  if (millis() - ultimoEventoMs > TIEMPO_IDLE_MS) {
+    if (rojoActual != 50 || verdeActual != 50 || azulActual != 50) {
+      cambiarColorGradual(50, 50, 50, 25, 8); 
+    }
   }
 }
 
-// --- FUNCIÓN DE TRANSICIÓN SUAVE (FADE) ---
+void revisarBotones() {
+  unsigned long tiempoActual = millis();
+
+  // Revisar bloque principal
+  for (int i = 0; i < 12; i++) {
+    if (digitalRead(botonesPrincipales[i]) == LOW) {
+      if (tiempoActual - ultimoDebounceBotones[i] > TIEMPO_DEBOUNCE) {
+        Serial.print(F("BOTON_P:"));
+        Serial.println(i + 1);
+        
+        // Obtener el color asignado a este botón principal
+        uint8_t r = PALETA_PRINCIPALES[i][0];
+        uint8_t g = PALETA_PRINCIPALES[i][1];
+        uint8_t b = PALETA_PRINCIPALES[i][2];
+        
+        cambiarColorGradual(r, g, b, 12, 4); // Reacción de color instantánea
+        ultimoEventoMs = millis();
+        ultimoDebounceBotones[i] = tiempoActual;
+        break;
+      }
+    }
+  }
+
+  // Revisar bloque secundario
+  for (int i = 0; i < 4; i++) {
+    if (digitalRead(botonesSecundarios[i]) == LOW) {
+      if (tiempoActual - ultimoDebounceBotones[i + 12] > TIEMPO_DEBOUNCE) {
+        Serial.print(F("BOTON_S:"));
+        Serial.println(i + 1);
+        
+        // Obtener el color asignado a este botón secundario
+        uint8_t r = PALETA_SECUNDARIOS[i][0];
+        uint8_t g = PALETA_SECUNDARIOS[i][1];
+        uint8_t b = PALETA_SECUNDARIOS[i][2];
+        
+        cambiarColorGradual(r, g, b, 12, 4); // Reacción de color instantánea
+        ultimoEventoMs = millis();
+        ultimoDebounceBotones[i + 12] = tiempoActual;
+        break;
+      }
+    }
+  }
+}
+
+void revisarNFC() {
+  uint8_t success;
+  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  
+  uint8_t uidLength;                        
+  
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50);
+  
+  if (success) {
+    uint8_t data[16];
+    String codigoMoneda = "";
+    
+    if (nfc.mifareclassic_ReadDataBlock(4, data)) {
+      for (int i = 0; i < 16; i++) {
+        if (data[i] >= 32 && data[i] <= 126) { 
+          codigoMoneda += (char)data[i];
+        }
+      }
+      codigoMoneda.trim(); 
+    } 
+    
+    if (codigoMoneda.length() == 0) {
+      for (uint8_t i = 0; i < uidLength; i++) {
+        if (uid[i] < 0x10) codigoMoneda += "0";
+        codigoMoneda += String(uid[i], HEX);
+      }
+    }
+
+    Serial.print(F("NFC:"));
+    Serial.println(codigoMoneda);
+    
+    // Las monedas mantienen su lógica Hash usando su propia paleta (PALETA_NFC)
+    int indiceColor = obtenerIndiceColor(codigoMoneda);
+    uint8_t rDestino = PALETA_NFC[indiceColor][0];
+    uint8_t gDestino = PALETA_NFC[indiceColor][1];
+    uint8_t bDestino = PALETA_NFC[indiceColor][2];
+    
+    cambiarColorGradual(rDestino, gDestino, bDestino, 15, 5); 
+    
+    delay(2000); // Sostener el color de la moneda 2 segundos
+    ultimoEventoMs = millis(); 
+  }
+}
+
 void cambiarColorGradual(uint8_t rDestino, uint8_t gDestino, uint8_t bDestino, int pasos, int esperaMs) {
   for (int i = 0; i <= pasos; i++) {
     uint8_t rIntermedio = rojoActual + ((rDestino - rojoActual) * i / pasos);
@@ -172,11 +206,10 @@ void cambiarColorGradual(uint8_t rDestino, uint8_t gDestino, uint8_t bDestino, i
   azulActual = bDestino;
 }
 
-// --- ALGORITMO DE HASHING PARA INDEXAR EL COLOR ---
 int obtenerIndiceColor(String codigo) {
-  unsigned int sumaAsccii = 0;
+  unsigned int sumaAscii = 0;
   for (unsigned int i = 0; i < codigo.length(); i++) {
-    sumaAsccii += (int)codigo[i]; // Sumamos el valor numérico de cada caracter del String
+    sumaAscii += (int)codigo[i];
   }
-  return sumaAsccii % 16; // El residuo nos asegura un índice válido estricto entre 0 y 15
+  return sumaAscii % 16;
 }

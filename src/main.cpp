@@ -13,34 +13,41 @@ const unsigned long TIEMPO_IDLE_MS = 3000; // 3 segundos antes de volver al blan
 
 Adafruit_NeoPixel tiras(NUM_LEDS, PIN_LEDS, NEO_GRB + NEO_KHZ800);
 
-// --- COLORES BASE PARA REFERENCIA ---
-// Blanco: {255, 255, 255} | Rojo: {255, 0, 0} | Verde: {0, 255, 0} | Amarillo: {255, 200, 0} | Azul: {0, 0, 255}
+// --- MATRICES DE TEXTO PARA PYTHON ---
+const char* NOMBRES_ZODIACK[12] = {
+  "ARIES", "TAURO", "GEMINIS", "CANCER", 
+  "LEO", "VIRGO", "LIBRA", "ESCORPIO", 
+  "SAGITARIO", "CAPRICORNIO", "ACUARIO", "PISCIS"
+};
 
-// --- MAPA DE COLORES FIJOS: BOTONES PRINCIPALES (1 al 12) ---
+const char* NOMBRES_SECUNDARIOS[4] = {
+  "VILLANO", "SUERTE", "SORPRESA", "SECRETO"
+};
+
+// --- MAPA DE COLORES ESPECÍFICOS REASIGNADOS ---
 const uint8_t PALETA_PRINCIPALES[12][3] = {
-  {255, 255, 255}, // Btn 1: Blanco
-  {255, 0, 0},     // Btn 2: Rojo
-  {0, 255, 0},     // Btn 3: Verde
-  {255, 255, 255}, // Btn 4: Blanco
-  {255, 200, 0},   // Btn 5: Amarillo
-  {0, 0, 255},     // Btn 6: Azul
-  {0, 0, 255},     // Btn 7: Azul
-  {255, 255, 255}, // Btn 8: Blanco
-  {255, 0, 0},     // Btn 9: Rojo
-  {0, 0, 255},     // Btn 10: Azul
-  {255, 200, 0},   // Btn 11: Amarillo
-  {0, 255, 0}      // Btn 12: Verde
+  {255, 255, 255}, // Btn 1  (Aries)       -> Blanco
+  {255, 0, 0},     // Btn 2  (Tauro)       -> Rojo
+  {0, 255, 0},     // Btn 3  (GÉminis)     -> Verde
+  {255, 255, 255}, // Btn 4  (CÁncer)      -> Blanco
+  {255, 200, 0},   // Btn 5  (Leo)         -> Amarillo
+  {0, 0, 255},     // Btn 6  (Virgo)       -> Azul
+  {0, 0, 255},     // Btn 7  (Libra)       -> Azul
+  {255, 255, 255}, // Btn 8  (Escorpio)    -> Blanco
+  {255, 0, 0},     // Btn 9  (Sagitario)   -> Rojo
+  {0, 0, 255},     // Btn 10 (Capricornio) -> Azul
+  {255, 200, 0},   // Btn 11 (Acuario)     -> Amarillo
+  {0, 255, 0}      // Btn 12 (Piscis)      -> Verde
 };
 
-// --- MAPA DE COLORES FIJOS: BOTONES SECUNDARIOS (1 al 4) ---
 const uint8_t PALETA_SECUNDARIOS[4][3] = {
-  {255, 0, 0},     // Btn 1: Rojo
-  {255, 200, 0},   // Btn 2: Amarillo
-  {0, 0, 255},     // Btn 3: Azul
-  {255, 255, 255}  // Btn 4: Blanco
+  {255, 0, 0},     // Btn 1 (Villano)  -> Rojo
+  {255, 200, 0},   // Btn 2 (Suerte)   -> Amarillo
+  {0, 0, 255},     // Btn 3 (Sorpresa) -> Azul
+  {255, 255, 255}  // Btn 4 (Secreto)  -> Blanco
 };
 
-// --- PALETA DE 16 COLORES HASH PARA MONEDAS NFC ---
+// Paleta hash para monedas NFC
 const uint8_t PALETA_NFC[16][3] = {
   {255, 0, 0}, {255, 60, 0}, {255, 120, 0}, {255, 200, 0},
   {120, 255, 0}, {0, 255, 0}, {0, 255, 130}, {0, 255, 255},
@@ -70,7 +77,7 @@ void setup() {
   
   tiras.begin();
   tiras.setBrightness(255); 
-  cambiarColorGradual(50, 50, 50, 40, 6); // Inicializar en IDLE (Blanco tenue de espera)
+  cambiarColorGradual(50, 50, 50, 40, 6); // Estado base IDLE (Blanco tenue)
   ultimoEventoMs = millis();
 
   for(int i=0; i<12; i++) pinMode(botonesPrincipales[i], INPUT_PULLUP);
@@ -85,14 +92,14 @@ void setup() {
     while (1) delay(10); 
   }
   nfc.SAMConfig(); 
-  Serial.println(F("--- ESP32 MAPA DE COLORES LISTO ---"));
+  Serial.println(F("--- ESP32 MULTI-EVENTO CONFIGURADO ---"));
 }
 
 void loop() {
   revisarBotones();
   revisarNFC();
 
-  // Temporizador para regresar a IDLE (Blanco tenue)
+  // Temporizador de regreso a IDLE
   if (millis() - ultimoEventoMs > TIEMPO_IDLE_MS) {
     if (rojoActual != 50 || verdeActual != 50 || azulActual != 50) {
       cambiarColorGradual(50, 50, 50, 25, 8); 
@@ -103,19 +110,20 @@ void loop() {
 void revisarBotones() {
   unsigned long tiempoActual = millis();
 
-  // Revisar bloque principal
+  // 1. Revisar Signos Zodiacales (Botones Principales)
   for (int i = 0; i < 12; i++) {
     if (digitalRead(botonesPrincipales[i]) == LOW) {
       if (tiempoActual - ultimoDebounceBotones[i] > TIEMPO_DEBOUNCE) {
-        Serial.print(F("BOTON_P:"));
-        Serial.println(i + 1);
         
-        // Obtener el color asignado a este botón principal
+        // Formato limpio para Python: "ZODIACO:ARIES", "ZODIACO:TAURO", etc.
+        Serial.print(F("ZODIACO:"));
+        Serial.println(NOMBRES_ZODIACK[i]);
+        
         uint8_t r = PALETA_PRINCIPALES[i][0];
         uint8_t g = PALETA_PRINCIPALES[i][1];
         uint8_t b = PALETA_PRINCIPALES[i][2];
         
-        cambiarColorGradual(r, g, b, 12, 4); // Reacción de color instantánea
+        cambiarColorGradual(r, g, b, 12, 4); 
         ultimoEventoMs = millis();
         ultimoDebounceBotones[i] = tiempoActual;
         break;
@@ -123,19 +131,20 @@ void revisarBotones() {
     }
   }
 
-  // Revisar bloque secundario
+  // 2. Revisar Modos de Juego (Botones Secundarios)
   for (int i = 0; i < 4; i++) {
     if (digitalRead(botonesSecundarios[i]) == LOW) {
       if (tiempoActual - ultimoDebounceBotones[i + 12] > TIEMPO_DEBOUNCE) {
-        Serial.print(F("BOTON_S:"));
-        Serial.println(i + 1);
         
-        // Obtener el color asignado a este botón secundario
+        // Formato limpio para Python: "MODO:VILLANO", "MODO:SUERTE", etc.
+        Serial.print(F("MODO:"));
+        Serial.println(NOMBRES_SECUNDARIOS[i]);
+        
         uint8_t r = PALETA_SECUNDARIOS[i][0];
         uint8_t g = PALETA_SECUNDARIOS[i][1];
         uint8_t b = PALETA_SECUNDARIOS[i][2];
         
-        cambiarColorGradual(r, g, b, 12, 4); // Reacción de color instantánea
+        cambiarColorGradual(r, g, b, 12, 4); 
         ultimoEventoMs = millis();
         ultimoDebounceBotones[i + 12] = tiempoActual;
         break;
@@ -171,10 +180,10 @@ void revisarNFC() {
       }
     }
 
+    // Mantiene consistencia con tus lecturas seriales
     Serial.print(F("NFC:"));
     Serial.println(codigoMoneda);
     
-    // Las monedas mantienen su lógica Hash usando su propia paleta (PALETA_NFC)
     int indiceColor = obtenerIndiceColor(codigoMoneda);
     uint8_t rDestino = PALETA_NFC[indiceColor][0];
     uint8_t gDestino = PALETA_NFC[indiceColor][1];
@@ -182,7 +191,7 @@ void revisarNFC() {
     
     cambiarColorGradual(rDestino, gDestino, bDestino, 15, 5); 
     
-    delay(2000); // Sostener el color de la moneda 2 segundos
+    delay(2000); 
     ultimoEventoMs = millis(); 
   }
 }
